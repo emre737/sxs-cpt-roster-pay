@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14181f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Roster Pay">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>Roster Pay</title>
+  <style>
+    :root{--bg:#f5f6f8;--card:#fff;--txt:#14181f;--muted:#6b7280;--line:#e5e7eb;--accent:#14181f}
+    *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+    main{max-width:760px;margin:0 auto;padding:18px 14px 40px}
+    h1{font-size:28px;margin:8px 0 4px} h2{font-size:18px;margin:0 0 12px}
+    .muted{color:var(--muted);font-size:13px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+    label{display:block;font-size:13px;color:var(--muted)} input,button{font:inherit}
+    input[type=text],input[type=number],input[type=file]{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:12px;padding:13px;background:#fff;color:var(--txt);font-size:16px}
+    button{border:0;border-radius:13px;padding:14px 16px;background:var(--accent);color:#fff;font-weight:700;width:100%;min-height:48px}
+    button:disabled{opacity:.45}.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}.kpi{background:#fff;border:1px solid var(--line);border-radius:15px;padding:12px}
+    .kpi b{display:block;font-size:20px;margin-top:3px}.big{font-size:38px;font-weight:800;letter-spacing:-1px}.eur{font-size:20px;color:var(--muted);font-weight:700}
+    table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:9px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+    .scroll{overflow-x:auto}.ok{color:#136d38}.warn{color:#8a5b00}
+    @media(min-width:680px){.grid4{grid-template-columns:repeat(4,1fr)}.kpis{grid-template-columns:repeat(4,1fr)}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Roster Pay</h1>
+  <div class="muted">Roster PDF’den tahmini maaş hesabı · iPhone PWA beta</div>
+
+  <section class="card">
+    <h2>1. Roster PDF</h2>
+    <input id="pdfFile" type="file" accept="application/pdf,.pdf">
+    <div class="grid" style="margin-top:12px">
+      <label>Eğitim günleri
+        <input id="trainingDays" type="text" placeholder="Örn: 1,2,6,7">
+      </label>
+      <label>EUR/TL
+        <input id="fx" type="number" step="0.01" value="63.75">
+      </label>
+    </div>
+    <button id="parseBtn" disabled style="margin-top:12px">PDF’yi oku</button>
+    <div id="status" class="muted" style="margin-top:10px">PDF seç.</div>
+  </section>
+
+  <section id="resultArea" hidden>
+    <div class="kpis">
+      <div class="kpi"><span class="muted">Duty</span><b id="dutyShow">—</b></div>
+      <div class="kpi"><span class="muted">Night</span><b id="nightShow">—</b></div>
+      <div class="kpi"><span class="muted">Ek sektör</span><b id="sectorShow">—</b></div>
+      <div class="kpi"><span class="muted">TRI</span><b id="triShow">—</b></div>
+    </div>
+
+    <section class="card">
+      <h2>2. Manuel kontrol</h2>
+      <div class="grid4">
+        <label>Duty<input id="dutyEdit" type="text"></label>
+        <label>Night<input id="nightEdit" type="text"></label>
+        <label>Ek sektör<input id="sectorEdit" type="number" min="0" step="1"></label>
+        <label>TRI credit<input id="triEdit" type="text"></label>
+      </div>
+      <div class="grid4" style="margin-top:12px">
+        <label>İç tam<input id="domFull" type="number" min="0" step="1" value="0"></label>
+        <label>İç yarım<input id="domHalf" type="number" min="0" step="1" value="0"></label>
+        <label>Dış tam<input id="intFull" type="number" min="0" step="1" value="0"></label>
+        <label>Dış yarım<input id="intHalf" type="number" min="0" step="1" value="0"></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="muted">Roster bazlı tahmini kazanç</div>
+      <div id="totalTl" class="big">—</div>
+      <div id="totalEur" class="eur">—</div>
+      <div id="breakdown" class="grid4" style="margin-top:16px"></div>
+    </section>
+
+    <section class="card">
+      <h2>3. Görevler</h2>
+      <div id="hotelInfo" class="muted" style="margin-bottom:10px"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Gün</th><th>Report</th><th>Release</th><th>Tip</th><th>Duty</th><th>Night</th><th>Sektör</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script type="module">
+const $=id=>document.getElementById(id);
+const file=$('pdfFile'),btn=$('parseBtn');
+let pdfjs=null, activeDuties=[], activeCells=[];
+
+file.addEventListener('change',()=>{btn.disabled=!file.files.length;$('status').textContent=file.files.length?'PDF hazır.':'PDF seç.'});
+
+const pad=n=>String(n).padStart(2,'0');
+const toH=s=>{const m=String(s||'').match(/(\d{1,3}):(\d{2})/);return m?Number(m[1])+Number(m[2])/60:null};
+const hhmm=h=>{let m=Math.round(h*60);return pad(Math.floor(m/60))+':'+pad((m%60+60)%60)};
+const dur=(a,b)=>{let s=toH(a),e=toH(b);if(s==null||e==null)return 0;if(e<s)e+=24;return e-s};
+const overlapNight=(a,b)=>{let s=toH(a),e=toH(b);if(s==null||e==null)return 0;if(e<s)e+=24;let x=0;for(let d=-1;d<=1;d++){let ns=1+24*d,ne=6+24*d;x+=Math.max(0,Math.min(e,ne)-Math.max(s,ns))}return x};
+const eur=v=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(v);
+const tl=v=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:0}).format(v);
+
+function groupLines(items){
+  const lines=[];
+  items.sort((a,b)=>b.y-a.y||a.x-b.x);
+  for(const it of items){let l=lines.find(x=>Math.abs(x.y-it.y)<2.2);if(!l){l={y:it.y,items:[]};lines.push(l)}l.items.push(it)}
+  return lines.sort((a,b)=>b.y-a.y).map(l=>l.items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ').replace(/\s+/g,' ').trim());
+}
+
+function parseCell(day,lines){
+  const text=lines.join(' | ');
+  const report=(text.match(/Report\s+(\d{1,2}:\d{2})/i)||[])[1]||'';
+  const release=(text.match(/Release\s+(\d{1,2}:\d{2})/i)||[])[1]||'';
+  const standby=/\bSB(?:1|2|-PF)\b/i.test(text);
+  let simExtra=0,sectors=0,plannedFlight=0;
+  const hotels=[];
+  for(const line of lines){
+    if(/BOEING-[A-Z]/i.test(line)){const ts=[...line.matchAll(/(\d{1,2}:\d{2})/g)].map(m=>m[1]);if(ts.length>=2)simExtra+=dur(ts[0],ts.at(-1))}
+    if(/^XQ\d+/i.test(line)){sectors++;const ts=[...line.matchAll(/(\d{1,2}:\d{2})/g)].map(m=>m[1]);if(ts.length>=2)plannedFlight+=dur(ts[0],ts.at(-1))}
+    const hm=line.match(/Hotel\s+([A-Z]{3})/i);if(hm)hotels.push(hm[1].toUpperCase());
+  }
+  return {day,lines,report,release,standby,simExtra,sectors,plannedFlight,hotels};
+}
+
+function pair(cells){
+  const out=[];let open=null;
+  for(const c of cells){
+    if(c.report){if(open)out.push(open);open={day:c.day,report:c.report,release:'',standby:c.standby,simExtra:c.simExtra,sectors:c.sectors,plannedFlight:c.plannedFlight,lines:[...c.lines]}}
+    else if(open){open.simExtra+=c.simExtra;open.sectors+=c.sectors;open.plannedFlight+=c.plannedFlight;open.lines.push(...c.lines)}
+    if(c.release&&open){open.release=c.release;out.push(open);open=null}
+  }
+  if(open)out.push(open);return out;
+}
+
+async function extractPdf(f){
+  if(!pdfjs){$('status').textContent='PDF okuyucu yükleniyor…';pdfjs=await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/+esm')}
+  const data=new Uint8Array(await f.arrayBuffer());
+  const doc=await pdfjs.getDocument({data}).promise;
+  const cells=[];
+  for(let p=1;p<=doc.numPages;p++){
+    const page=await doc.getPage(p), tc=await page.getTextContent();
+    const items=tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({str:i.str.trim(),x:i.transform[4],y:i.transform[5],h:Math.abs(i.transform[3])}));
+    const dayMarks=items.filter(i=>/^([1-9]|[12]\d|3[01])$/.test(i.str)&&i.h>10).map(i=>({...i,day:Number(i.str)}));
+    for(const h of dayMarks){
+      const near=items.filter(it=>Math.abs(it.x-h.x)<34 && it.y<h.y && h.y-it.y<115);
+      cells.push({page:p,day:h.day,x:h.x,y:h.y,lines:groupLines(near)});
+    }
+  }
+  cells.sort((a,b)=>a.page-b.page||b.y-a.y||a.x-b.x);
+  // Keep the first contiguous 1..31-ish run that looks like the month body.
+  let start=cells.findIndex(c=>c.day===1);
+  return cells.slice(Math.max(0,start));
+}
+
+function recalc(){
+  const training=new Set($('trainingDays').value.split(',').map(x=>Number(x.trim())).filter(Boolean));
+  let duty=0,night=0,sectors=0,tri=0;
+  activeDuties.forEach(d=>{
+    const base=dur(d.report,d.release);
+    d.credit=d.standby?base*.25:base+d.simExtra;
+    d.night=d.standby?0:overlapNight(d.report,d.release);
+    d.extra=Math.max(0,d.sectors-2);
+    d.training=training.has(d.day);
+    duty+=d.credit;night+=d.night;sectors+=d.extra;
+    if(d.training) tri+=d.simExtra>0?base:d.plannedFlight;
+  });
+  $('dutyEdit').value=hhmm(duty);$('nightEdit').value=hhmm(night);$('sectorEdit').value=sectors;$('triEdit').value=hhmm(tri);
+  $('dutyShow').textContent=hhmm(duty);$('nightShow').textContent=hhmm(night);$('sectorShow').textContent=sectors;$('triShow').textContent=hhmm(tri);
+  $('rows').innerHTML=activeDuties.map(d=>`<tr><td>${d.day}</td><td>${d.report||'—'}</td><td>${d.release||'—'}</td><td>${d.standby?'STBY':d.simExtra?'SIM':'Duty'}${d.training?' · Eğitim':''}</td><td>${hhmm(d.credit)}</td><td>${hhmm(d.night)}</td><td>${d.sectors}</td></tr>`).join('');
+  const hotels=[...new Set(activeCells.flatMap(c=>c.hotels||[]))];
+  $('hotelInfo').textContent=hotels.length?'Hotel istasyonları: '+hotels.join(', '):'Hotel istasyonu otomatik bulunamadı.';
+  calcPay();
+}
+
+function calcPay(){
+  const duty=toH($('dutyEdit').value)||0,night=toH($('nightEdit').value)||0,tri=toH($('triEdit').value)||0;
+  const sectors=Math.max(0,Number($('sectorEdit').value)||0),fx=Math.max(0,Number($('fx').value)||0);
+  const base=6490,triBase=378;
+  const dutyPay=Math.min(duty,100)*28.6+Math.max(0,duty-100)*52.8;
+  const nightPay=night*71.3, sectorPay=sectors*17.9, triPay=triBase+Math.max(0,tri-12)*35;
+  const lay=(Number($('domFull').value)||0)*30+(Number($('domHalf').value)||0)*15+(Number($('intFull').value)||0)*50+(Number($('intHalf').value)||0)*25;
+  const total=base+dutyPay+nightPay+sectorPay+triPay+lay;
+  $('totalTl').textContent=tl(total*fx);$('totalEur').textContent=eur(total);
+  $('breakdown').innerHTML=[['Baz',base],['Duty',dutyPay],['Night',nightPay],['TRI',triPay],['Sektör',sectorPay],['Yatı',lay]]
+    .map(([k,v])=>`<div><span class="muted">${k}</span><br><b>${eur(v)}</b></div>`).join('');
+}
+
+btn.addEventListener('click',async()=>{
+  try{
+    btn.disabled=true;$('status').textContent='PDF okunuyor…';
+    activeCells=await extractPdf(file.files[0]);
+    activeDuties=pair(activeCells.map(c=>parseCell(c.day,c.lines)));
+    if(!activeDuties.length) throw new Error('Report/Release görevleri bulunamadı');
+    $('resultArea').hidden=false;recalc();$('status').innerHTML='<span class="ok">PDF okundu. Sonuçları aşağıdan kontrol et.</span>';
+  }catch(e){$('status').innerHTML='<span class="warn">PDF okunamadı: '+e.message+'</span>'}
+  finally{btn.disabled=false}
+});
+
+$('trainingDays').addEventListener('input',()=>activeDuties.length&&recalc());
+['dutyEdit','nightEdit','sectorEdit','triEdit','domFull','domHalf','intFull','intHalf','fx'].forEach(id=>$(id).addEventListener('input',calcPay));
+
+if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body>
+</html>
